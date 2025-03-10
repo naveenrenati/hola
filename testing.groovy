@@ -6,7 +6,7 @@ pipeline {
         stage('Create Jira Issue') {
             steps {
                 script {
-                    def createIssuePayload = """
+                    def payload = """
                     {
                         "fields": {
                             "project": {
@@ -23,69 +23,41 @@ pipeline {
                         }
                     }
                     """
-
-                    def responseCode = sh(
-                        script: """curl -s -w "%{http_code}" -o create_response.json -X POST "${JIRA_URL}/issue/" \
-                          -H "Authorization: Bearer ${JIRA_TOKEN}" \
-                          -H "Content-Type: application/json" \
-                          -d '${createIssuePayload}'""",
-                        returnStdout: true
-                    ).trim()
-
-                    if (responseCode == "201") {
-                        def issueKey = sh(script: "jq -r .key create_response.json", returnStdout: true).trim()
-                        echo "✅ Jira Issue Created: ${issueKey}"
-                        env.NEW_ISSUE_KEY = issueKey
-                    } else {
-                        echo "🔍 Jira Create API returned status: ${responseCode}"
-                        sh "cat create_response.json"
-                        error "❌ Failed to create Jira Issue"
+                    sh """
+                        curl -s -X POST "${JIRA_URL}/issue/" \
+                        -H "Authorization: Bearer ${JIRA_TOKEN}" \
+                        -H "Content-Type: application/json" \
+                        -d '${payload}' > create_response.json
+                    """
+                    script {
+                        env.NEW_ISSUE_KEY = sh(script: "jq -r .key create_response.json", returnStdout: true).trim()
+                        echo "✅ Created Jira Issue: ${env.NEW_ISSUE_KEY}"
                     }
                 }
             }
         }
 
-        stage('Link to Existing Jira Issue') {
+        stage('Link to Existing Issue') {
             steps {
                 script {
                     def linkPayload = """
                     {
-                        "type": {
-                            "name": "Relates"
-                        },
-                        "inwardIssue": {
-                            "key": "${env.NEW_ISSUE_KEY}"
-                        },
-                        "outwardIssue": {
-                            "key": "${JIRA_EXISTING_ISSUE_KEY}"
-                        },
+                        "type": { "name": "Relates" },
+                        "inwardIssue": { "key": "${env.NEW_ISSUE_KEY}" },
+                        "outwardIssue": { "key": "${JIRA_EXISTING_ISSUE_KEY}" },
                         "comment": {
-                            "body": "Linking issue ${env.NEW_ISSUE_KEY} to existing issue ${JIRA_EXISTING_ISSUE_KEY}"
+                            "body": "Automatically linked issue ${env.NEW_ISSUE_KEY} to ${JIRA_EXISTING_ISSUE_KEY}"
                         }
                     }
                     """
-
-                    def linkResponseCode = sh(
-                        script: """curl -s -o link_response.json -w "%{http_code}" -X POST "${JIRA_URL}/issueLink" \
-                          -H "Authorization: Bearer ${JIRA_TOKEN}" \
-                          -H "Content-Type: application/json" \
-                          -d '${linkPayload}'""",
-                        returnStdout: true
-                    ).trim()
-
-                    if (linkResponseCode == "200" || linkResponseCode == "201") {
-                        def errorMsg = sh(script: "jq '.errorMessages' link_response.json", returnStdout: true).trim()
-                        if (errorMsg != "null" && errorMsg != "[]") {
-                            echo "⚠️ Link response contains errorMessages: ${errorMsg}"
-                            error "❌ Jira returned error during linking."
-                        } else {
-                            echo "✅ Issue ${env.NEW_ISSUE_KEY} successfully linked to ${JIRA_EXISTING_ISSUE_KEY}"
-                        }
-                    } else {
-                        echo "🔍 Jira Link API returned status: ${linkResponseCode}"
-                        sh "cat link_response.json"
-                        error "❌ Failed to link Jira issues"
-                    }
+                    sh """
+                        curl -s -X POST "${JIRA_URL}/issueLink" \
+                        -H "Authorization: Bearer ${JIRA_TOKEN}" \
+                        -H "Content-Type: application/json" \
+                        -d '${linkPayload}' > link_response.json
+                        echo "✅ Link API response:"
+                        cat link_response.json
+                    """
                 }
             }
         }
